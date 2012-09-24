@@ -15,6 +15,11 @@ trap 'USR1' do
   mgr.stop! if mgr
 end
 
+trap 'QUIT' do
+  Sidekiq.logger.info "Received QUIT, shutting down once in-progress jobs complete"
+  Sidekiq::CLI.instance.interrupt_graceful
+end
+
 trap 'TTIN' do
   Thread.list.each do |thread|
     Sidekiq.logger.info "Thread TID-#{thread.object_id.to_s(36)} #{thread['label']}"
@@ -47,6 +52,7 @@ module Sidekiq
       @code = nil
       @interrupt_mutex = Mutex.new
       @interrupted = false
+      @graceful = false
     end
 
     def parse(args=ARGV)
@@ -80,7 +86,11 @@ module Sidekiq
       rescue Interrupt
         logger.info 'Shutting down'
         poller.terminate! if poller.alive?
-        @manager.stop!(:shutdown => true, :timeout => options[:timeout])
+        if @graceful
+          @manager.stop!
+        else
+          @manager.stop!(:shutdown => true, :timeout => options[:timeout])
+        end
         @manager.wait(:shutdown)
         # Explicitly exit so busy Processor threads can't block
         # process shutdown.
@@ -88,13 +98,18 @@ module Sidekiq
       end
     end
 
-    def interrupt
+    def interrupt(graceful=false)
       @interrupt_mutex.synchronize do
         unless @interrupted
           @interrupted = true
+          @graceful = graceful
           Thread.main.raise Interrupt
         end
       end
+    end
+
+    def interrupt_graceful
+      interrupt true
     end
 
     private
