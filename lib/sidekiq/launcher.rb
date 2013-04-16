@@ -22,6 +22,12 @@ module Sidekiq
       manager.wait(:shutdown)
     end
 
+    def graceful
+      poller.async.terminate if poller.alive?
+      manager.async.stop
+      manager.wait(:shutdown)
+    end
+
     def procline(tag)
       $0 = manager.procline(tag)
       manager.after(5) { procline(tag) }

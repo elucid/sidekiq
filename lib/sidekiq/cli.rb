@@ -42,7 +42,7 @@ module Sidekiq
     def run
       self_read, self_write = IO.pipe
 
-      %w(INT TERM USR1 USR2 TTIN).each do |sig|
+      %w(INT TERM USR1 USR2 TTIN QUIT).each do |sig|
         trap sig do
           self_write.puts(sig)
         end
@@ -101,6 +101,10 @@ module Sidekiq
       when 'TERM'
         # Heroku sends TERM and then waits 10 seconds for process to exit.
         raise Interrupt
+      when 'QUIT'
+        launcher.graceful
+        remove_pidfile
+        exit(0)
       when 'USR1'
         Sidekiq.logger.info "Received USR1, no longer accepting new work"
         launcher.manager.async.stop
@@ -309,6 +313,15 @@ module Sidekiq
       if path = options[:pidfile]
         File.open(path, 'w') do |f|
           f.puts Process.pid
+        end
+      end
+    end
+
+    def remove_pidfile
+      if pidfile = options[:pidfile]
+        # guard against deleting a pidfile belonging to another process
+        if File.read(pidfile).strip.to_i == Process.pid
+          FileUtils.rm_f pidfile
         end
       end
     end
